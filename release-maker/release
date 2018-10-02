@@ -1,0 +1,99 @@
+#!python
+import os
+import click
+import re
+import requests
+from collections import Counter
+
+
+GH_API = 'http://api.github.com/'
+GH_TOKEN = os.environ.get('GH_TOKEN', None)
+
+
+@click.command()
+@click.option('--org', default='kids-first',
+             prompt='Name of the github organization',
+             help='Nome of the github organization containing the repository')
+@click.option('--repo', default='kf-api-dataservice',
+             prompt='Name of the github repository',
+             help='Nome of the github repository to make a release for')
+@click.option('--major', default=False, is_flag=True,
+             prompt='Is this a major release?',
+             help='Whether this is a major version release (X.0.0)')
+def make_release(org, repo, major):
+    if GH_TOKEN is None:
+        raise click.ClickException('Please provide a github token in the GH_TOKEN env var')
+    click.echo(f'Making a release for {repo}')
+    session = requests.Session()
+    session.headers.update({'Authorization': 'token '+GH_TOKEN})
+    
+    # Get the latest release tag and date
+    resp = session.get(f'{GH_API}repos/{org}/{repo}/tags')
+    latest_tag = resp.json()[0]
+    latest_tag_commit = session.get(latest_tag['commit']['url']).json()
+    latest_tag_date = latest_tag_commit['commit']['author']['date']
+    # Get all commits since the release was made
+    resp = requests.get(f'{GH_API}repos/{org}/{repo}/commits?since='+latest_tag_date).json()
+    features = [r['commit']['message'] for r in resp if len(r['parents']) > 1]
+    # Extract issue numbers from merge messages
+    pr_re = re.compile(r'^Merge pull request #(\d+).*')
+    pr_numbers = [ pr_re.match(f).groups(1)[0] for f in features ]
+
+    # Get all relevant prs
+    prs = [session.get(f'{GH_API}repos/{org}/{repo}/pulls/'+n).json()
+           for n in pr_numbers]
+
+    # Emoji counts
+    emojis = [pr['title'].split(' ')[0] for pr in prs]
+    emojis = ['{}x{}'.format(i, j) for i,j
+              in sorted(Counter(emojis).items(),
+                        key=lambda x: x[1],
+                        reverse=True)
+              if '🏷' not in i]
+
+    # Label counts
+    labels = ['[{}]({})'.format(l['name'], l['url'])
+              for pr in prs for l in pr['labels']]
+    labels = ['{} x{}'.format(i, j)
+              for i,j in sorted(Counter(labels).items(),
+                                key=lambda x: x[1],
+                                reverse=True)
+              if '🏷' not in i]
+
+    # Features from pr titles and authors
+    features = ['- (#{}) {} - @{}'.format(pr['number'],
+                                          pr['title'],
+                                          pr['user']['login'])
+                for pr in prs if '🏷' not in pr['title']]
+
+    cmajor = int(latest_tag['name'].split('.')[0])
+    cminor = int(latest_tag['name'].split('.')[1])
+    if major:
+        release_version = '{}.0.0'.format(cmajor+1, cminor)
+    else:
+        release_version = '{}.{}.0'.format(cmajor, cminor+1)
+
+
+    click.echo(f'Saving notes for {repo} {release_version}')
+    # Generate release notes
+    notes = ''
+    notes += '# Kids First Release Coordinator Release {}\n\n'.format(release_version)
+    notes += '## Features\n\n'
+    notes += '### Summary\n\n'
+    notes += 'Feature Emojis: ' + ' '.join(emojis) + '\n'
+    notes += 'Feature Labels: ' + ' '.join(labels) + '\n\n'
+    notes += '### New features and changes\n\n'
+    notes += '\n'.join(features)
+
+    click.echo('#'*80)
+    click.echo(notes+'\n\n')
+
+    file_name = f'{repo}-{release_version}.md'
+    with open(file_name, 'w') as f:
+        f.write(notes)
+
+    click.echo(f'Saved notes to {file_name}')
+
+
+if __name__ == '__main__':
+    make_release()
