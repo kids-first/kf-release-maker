@@ -29,11 +29,19 @@ def make_release(org, repo, major):
     
     # Get the latest release tag and date
     resp = session.get(f'{GH_API}repos/{org}/{repo}/tags')
-    latest_tag = resp.json()[0]
-    latest_tag_commit = session.get(latest_tag['commit']['url']).json()
-    latest_tag_date = latest_tag_commit['commit']['author']['date']
+
+    if len(resp.json()) > 0:
+        latest_tag = resp.json()[0]
+        latest_tag_commit = session.get(latest_tag['commit']['url']).json()
+        latest_tag_date = latest_tag_commit['commit']['author']['date']
+        since = '?since='+latest_tag_date
+    else:
+        latest_tag_date = ''
+        latest_tag = {'name': '0.0.0'}
+        since = ''
+
     # Get all commits since the release was made
-    resp = requests.get(f'{GH_API}repos/{org}/{repo}/commits?since='+latest_tag_date).json()
+    resp = requests.get(f'{GH_API}repos/{org}/{repo}/commits'+since).json()
     features = [r['commit']['message'] for r in resp if len(r['parents']) > 1]
     # Extract issue numbers from merge messages
     pr_re = re.compile(r'^Merge pull request #(\d+).*')
@@ -77,7 +85,7 @@ def make_release(org, repo, major):
     click.echo(f'Saving notes for {repo} {release_version}')
     # Generate release notes
     notes = ''
-    notes += '# Kids First Release Coordinator Release {}\n\n'.format(release_version)
+    notes += '# {} Release {}\n\n'.format(' '.join(repo.split('-')).title(), release_version)
     notes += '## Features\n\n'
     notes += '### Summary\n\n'
     notes += 'Feature Emojis: ' + ' '.join(emojis) + '\n'
