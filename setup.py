@@ -6,4 +6,8 @@ setup(name='kf-release-maker',
       author='Kids First Data Resource Center',
       scripts=['release-maker/release'],
       packages=['release-maker'],
+      install_requires=[
+        'Click',
+        'requests'
+    ]
 )
