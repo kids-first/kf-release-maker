@@ -38,21 +38,32 @@ def make_release(org, repo, major):
     else:
         latest_tag_date = ''
         latest_tag = {'name': '0.0.0'}
-        since = ''
+        since = '?per_page=100'
 
     # Get all commits since the release was made
-    resp = requests.get(f'{GH_API}repos/{org}/{repo}/commits'+since).json()
-    features = [r['commit']['message'] for r in resp if len(r['parents']) > 1]
+    page = 1
+    resp = requests.get(f'{GH_API}repos/{org}/{repo}/commits{since}&page={page}').json()
+    commits = []
+    while len(resp) > 0:
+        resp = requests.get(f'{GH_API}repos/{org}/{repo}/commits{since}&page={page}').json()
+        commits.extend(resp)
+        page += 1
+
+    features = [r['commit']['message'] for r in commits if len(r['parents']) > 1]
     # Extract issue numbers from merge messages
     pr_re = re.compile(r'^Merge pull request #(\d+).*')
-    pr_numbers = [ pr_re.match(f).groups(1)[0] for f in features ]
+    pr_numbers = []
+    for f in features:
+        m = pr_re.match(f)
+        if m:
+            pr_numbers.append(m.groups(1)[0])
 
     # Get all relevant prs
-    prs = [session.get(f'{GH_API}repos/{org}/{repo}/pulls/'+n).json()
+    prs = [session.get(f'{GH_API}repos/{org}/{repo}/pulls/{n}').json()
            for n in pr_numbers]
-
     # Emoji counts
     emojis = [pr['title'].split(' ')[0] for pr in prs]
+            
     emojis = ['{}x{}'.format(i, j) for i,j
               in sorted(Counter(emojis).items(),
                         key=lambda x: x[1],
