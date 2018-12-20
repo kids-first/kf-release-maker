@@ -42,10 +42,10 @@ def make_release(org, repo, major):
 
     # Get all commits since the release was made
     page = 1
-    resp = requests.get(f'{GH_API}repos/{org}/{repo}/commits{since}&page={page}').json()
+    resp = session.get(f'{GH_API}repos/{org}/{repo}/commits{since}&page={page}').json()
     commits = []
     while len(resp) > 0:
-        resp = requests.get(f'{GH_API}repos/{org}/{repo}/commits{since}&page={page}').json()
+        resp = session.get(f'{GH_API}repos/{org}/{repo}/commits{since}&page={page}').json()
         commits.extend(resp)
         page += 1
 
