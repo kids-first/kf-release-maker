@@ -14,7 +14,7 @@ GH_TOKEN = os.environ.get('GH_TOKEN', None)
 @click.option('--org', default='kids-first',
              prompt='Name of the github organization',
              help='Nome of the github organization containing the repository')
-@click.option('--repo', default='kf-api-dataservice',
+@click.option('--repo', default=os.getcwd().split('/')[-1],
              prompt='Name of the github repository',
              help='Nome of the github repository to make a release for')
 @click.option('--major', default=False, is_flag=True,
