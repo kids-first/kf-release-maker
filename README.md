@@ -16,7 +16,7 @@ Release notes markdown consists of:
 ## Installation
 
 ```
-$ pip install -e git+https://GitHub.com/kids-first/kf-release-maker.git#egg=kf-release-maker
+$ pip install -e git+https://GitHub.com/kids-first/kf-release-maker.git@refactor-release-maker#egg=kf-release-maker
 ```
 
 ## Creating a new release
