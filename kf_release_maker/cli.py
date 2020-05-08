@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 
 import os
+
 import click
 
 from kf_release_maker import config
-from kf_release_maker.release_maker import GitHubReleaseMaker
+from kf_release_maker.release_maker import (
+    MAJOR,
+    MINOR,
+    PATCH,
+    GitHubReleaseMaker,
+)
 
-CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 @click.group(context_settings=CONTEXT_SETTINGS)
@@ -20,19 +26,20 @@ def cli():
     pass
 
 
-@click.command(name='notes')
-@click.option('--org', default=config.DEFAULT_GH_ORG,
-              prompt='Name of the github organization',
-              help='Nome of the github organization containing the repository')
-@click.option('--repo', default=os.getcwd().split('/')[-1],
-              prompt='Name of the github repository',
-              help='Nome of the github repository to make a release for')
+@click.command(name="notes")
 @click.option(
-    '--version_type', default='minor',
-    type=click.Choice(list(config.VALID_VERSION_TYPES)),
-    prompt='What kind of release is this?',
-    help='Version types follow semantic versioning')
-def release_notes(org, repo, version_type):
+    "--repo",
+    prompt="The github repository (e.g. kids-first/kf-lib-data-ingest)",
+    help="The github organization/repository to make a release for",
+)
+@click.option(
+    "--release_type",
+    default="minor",
+    type=click.Choice([MAJOR, MINOR, PATCH]),
+    prompt="What kind of release is this?",
+    help="Version types follow semantic versioning",
+)
+def release_notes(repo, release_type):
     """
     Create a release notes markdown file containing:
 
@@ -44,7 +51,18 @@ def release_notes(org, repo, version_type):
     """
 
     r = GitHubReleaseMaker()
-    r.release_notes(org=org, repo=repo, version_type=version_type)
+    new_version, markdown = r.build_release_notes(
+        repo=repo,
+        release_type=release_type,
+        gh_token=os.getenv(config.GH_TOKEN_VAR),
+    )
+
+    # Write markdown file
+    file_name = f'{repo.partition("/")[2]}-{new_version}.md'
+    with open(file_name, "w") as f:
+        f.write(markdown)
+
+    print(f"Saved release notes to {file_name}")
 
 
 cli.add_command(release_notes)

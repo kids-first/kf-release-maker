@@ -1,276 +1,198 @@
-import os
+from collections import defaultdict
 from urllib.parse import urlencode
-from pprint import pformat
 
-import pandas
-import requests
+import emoji
+import regex
+from d3b_utils.requests_retry import Session
 
 from kf_release_maker import config
 
-
-def get_gh_token(token_env_var=config.GH_TOKEN_VAR):
-    """
-    Get GH token from environment
-    """
-    token = os.environ.get(token_env_var, None)
-    if token is None:
-        raise Exception(
-            'Please provide a github token in the GH_TOKEN env var')
-
-    return token
-
-
-def get(session, url, exit_on_fail=True, **request_kwargs):
-    """
-    If response.status_code is not 200 and exit_on_fail=True then exit program
-    Otherwise return original response
-    """
-    response = session.get(url, **request_kwargs)
-
-    if response.status_code != 200:
-        print(f'Could not fetch {url}! Caused by: {response.text}')
-        if exit_on_fail:
-            exit(1)
-
-    return response
-
-
-def paginate(session, endpoint, query_params):
-    """
-    Paginate endpoint, return all results
-    """
-    query_params.update({'page': 1, 'per_page': 100})
-    url = f'{endpoint}?{urlencode(query_params)}'
-    items = True
-    results = []
-    while items:
-        print(f'Fetching page {query_params["page"]} ...')
-        url = f'{endpoint}?{urlencode(query_params)}'
-        items = get(session, url).json()
-        results.extend(items)
-        query_params['page'] += 1
-
-    return results
+MAJOR = "major"
+MINOR = "minor"
+PATCH = "patch"
+release_pattern = r"\s*[" + config.RELEASE_EMOJIS + r"]\s*Release"
+emoji_categories = {
+    e: category
+    for category, emoji_set in config.EMOJI_CATEGORIES.items()
+    for e in emoji_set
+}
 
 
 class GitHubReleaseMaker(object):
-
     def __init__(self, gh_api=config.DEFAULT_GH_API):
         self.api = gh_api
-        self.base_url = None
-        self.org = None
-        self.repo = None
 
-    def get_prs(self):
+    def _starting_emojis(self, title):
         """
-        Get all closed PRs with base branch = master
+        Detect emojis at the start of a PR title (and fix malformed titles)
         """
-        print(f'Fetching PRs for {self.repo} ...')
+        emojis = set()
+        graphemes = regex.findall(r"\X", title)
+        for i, g in enumerate(graphemes):
+            if any(char in emoji.UNICODE_EMOJI for char in g):
+                emojis.add(g)
+            else:  # stop after first non-hit
+                if g != " ":
+                    # fix missing space in malformed titles
+                    title = (
+                        "".join(graphemes[:i]) + " " + "".join(graphemes[i:])
+                    )
+                break
 
-        endpoint = f'{self.base_url}/pulls'
-        query_params = {'base': 'master', 'state': 'closed'}
-        prs = paginate(self.session, endpoint, query_params)
+        return (emojis or {"?"}, title)
 
-        print(f'Found {len(prs)} PRs')
+    def _get(self, url, **request_kwargs):
+        """
+        If response.status_code is not 200 then exit program
+        Otherwise return original response
+        """
+        response = self.session.get(url, **request_kwargs)
+        if response.status_code != 200:
+            print(f"Could not fetch {url}! Caused by: {response.text}")
+            exit(1)
 
+        return response
+
+    def _yield_paginated(self, endpoint, query_params):
+        """
+        Yield from paginated endpoint
+        """
+        query_params.update({"page": 1, "per_page": 100})
+        url = f"{endpoint}?{urlencode(query_params)}"
+        items = True
+        while items:
+            print(f'... page {query_params["page"]} ...')
+            url = f"{endpoint}?{urlencode(query_params)}"
+            items = self._get(url).json()
+            yield from items
+            query_params["page"] += 1
+
+    def _get_merged_prs(self, after):
+        """
+        Get all non-release PRs merged into master after the given time
+        """
+        print(f"Fetching PRs ...")
+        endpoint = f"{self.base_url}/pulls"
+        query_params = {"base": "master", "state": "closed"}
+        prs = []
+        for p in self._yield_paginated(endpoint, query_params):
+            if p["merged_at"]:
+                if p["merged_at"] < after:
+                    break
+                elif regex.search(release_pattern, p["title"]) is None:
+                    prs.append(p)
         return prs
 
-    def get_tags(self):
-        """
-        Get all tags
-        """
-        tags_url = f'{self.base_url}/tags'
-
-        print(f'Fetching tags for {tags_url} ...')
-        tags = get(self.session, tags_url).json()
-        print(f'Found {len(tags)} tags')
-
-        return tags
-
-    def get_commit_date(self, commit_url):
+    def _get_commit_date(self, commit_url):
         """
         Get date of commit at commit_url
         """
-        latest_commit_date = ''
-        latest_commit = get(self.session, commit_url).json()
-        latest_commit_date = latest_commit['commit']['committer']['date']
+        commit = self._get(commit_url).json()
+        return commit["commit"]["committer"]["date"]
 
-        return latest_commit_date
-
-    def get_last_tag(self):
+    def _get_last_tag(self):
         """
-        Get latest tag, latest commit of the tag, and the version number
+        Get latest tag and when it was committed
         """
-        # Get all tags
-        tags = self.get_tags()
+        tags = self._get(f"{self.base_url}/tags").json()
 
         # Get latest commit of last tagged release
         if len(tags) > 0:
-            latest_tag = {'version_number': tags[0]['name']}
-            latest_tag['commit_date'] = self.get_commit_date(
-                tags[0]['commit']['url'])
-            print(f'Last tag was: {latest_tag["version_number"]}, '
-                  f'last commit was: {tags[0]["commit"]["sha"]}, '
-                  f'committed on : {latest_tag["commit_date"]}')
-        else:
-            print('No tags exist yet')
-            latest_tag = {'version_number': '0.0.0',
-                          'commit_date': ''}
-
-        return latest_tag
-
-    def make_pr_df(self, prs, latest_tag):
-        """
-        Make Pull Requests DataFrame with content needed to make
-        release notes markdown
-        """
-        pr_df = pandas.DataFrame([
-            {
-                'title': pr['title'],
-                'merged_at': pr['merged_at'],
-                'user': pr['user'].get('login'),
-                'number': pr['number'],
-                'label_link': pr['labels'][0]['url'] if pr['labels'] else None
+            return {
+                "name": tags[0]["name"],
+                "date": self._get_commit_date(tags[0]["commit"]["url"]),
+                "commit_sha": tags[0]["commit"]["sha"],
             }
-            for pr in prs
-        ])
-        print('Filtering out PRs that closed but did not merge into master')
-        pr_df = pr_df[pr_df['merged_at'].notnull()]
-
-        print('Filtering out release PRs')
-        pr_df = pr_df[(~pr_df['title'].str.startswith(config.RELEASE_EMOJI) &
-                       ~pr_df['title'].str.contains('Release'))]
-
-        # Only include PRs after latest commit of last tagged release
-        if latest_tag['commit_date']:
-            print('Filtering out PRs before last release on '
-                  f'{latest_tag["commit_date"]}')
-            pr_df = pr_df[pr_df['merged_at'] > latest_tag['commit_date']]
-
-        print(f'Remaining PRs: {pr_df.shape[0]}')
-
-        # Extract PR emojis, add them into own column
-        def get_emoji(title):
-            parts = title.split(' ', 2)
-            if len(parts) < 2:
-                return config.EMOJI_NOT_FOUND
-            else:
-                return parts[0]
-        pr_df['emoji'] = pr_df['title'].apply(
-            lambda title: get_emoji(title))
-
-        # Categorize PR emojis, add categories into own column
-        pr_df['category'] = pr_df['emoji'].apply(
-            lambda emoji: config.EMOJI_CATEGORIES.get(
-                emoji,
-                config.EMOJI_CATEGORIES['default'])
-        )
-
-        return pr_df
-
-    def next_release_version(self, prev_version, version_type):
-        """
-        Get next release version based on prev version. Version # uses
-        semantic versioning
-
-        version_type must be one of {'major', 'minor', 'patch'}
-        """
-        if version_type not in config.VALID_VERSION_TYPES:
-            raise ValueError(
-                f'Invalid version type: {version_type}! Version type '
-                f'must be one of {pformat(config.VALID_VERSION_TYPES)}!'
-            )
-
-        parts = [int(p) for p in prev_version.split('.')]
-        if version_type == 'major':
-            new_version = f'{parts[0]+1}.0.0'
-        elif version_type == 'minor':
-            new_version = f'{parts[0]}.{parts[1]+1}.0'
         else:
-            new_version = f'{parts[0]}.{parts[1]}.{parts[2]+1}'
+            return None
 
-        print(f'Next release version is {new_version}')
+    def _next_release_version(self, prev_version, release_type):
+        """
+        Get next release version based on prev version using semver format
+        """
+        parts = [int(p) for p in prev_version.split(".")]
+        if release_type == MAJOR:
+            new_version = f"{parts[0]+1}.0.0"
+        elif release_type == MINOR:
+            new_version = f"{parts[0]}.{parts[1]+1}.0"
+        elif release_type == PATCH:
+            new_version = f"{parts[0]}.{parts[1]}.{parts[2]+1}"
+        else:
+            raise ValueError(
+                f"Invalid release type: {release_type}! Release type "
+                f"must be one of ['{MAJOR}', '{MINOR}', '{PATCH}']!"
+            )
 
         return new_version
 
-    def create_release_markdown(self, pr_df):
-        """
-        Create release note markdown from PR DataFrame and
-        Write to a markdown file named: `<repo name>-<release version>.md`
-        """
-        print('Creating release note markdown ...\n')
+    def _to_markdown(self, repo, version, counts, prs):
+        messages = [
+            f"Release {version}",
+            "",
+            "### Summary",
+            "",
+            "- Emojis: "
+            + ", ".join(f"{k} x{v}" for k, v in counts["emojis"].items()),
+            "- Categories: "
+            + ", ".join(f"{k} x{v}" for k, v in counts["categories"].items()),
+            "",
+            "### New features and changes",
+            "",
+        ]
 
-        # Emoji count summary markdown string
-        emoji_counts = ' '.join([
-            f'{idx} x{row["number"]}'
-            for idx, row in pr_df.groupby('emoji').count().iterrows()
-        ])
-        # Category count summary markdown string
-        endpoint = f'{self.base_url}/labels'
-        category_counts = ' '.join([
-            f'[{cat}]({endpoint}/{cat}) x{row["number"]}'
-            for cat, row in pr_df.groupby('category').count().iterrows()
-        ])
-        # PR summary markdown string
-        prs = '\n'.join(
-            [f'- (#{row["number"]}) {row["title"]} - @{row["user"]}'
-             for _, row in pr_df.iterrows()]
-        )
+        for p in prs:
+            userlink = f"[{p['user']['login']}]({p['user']['html_url']})"
+            sha_link = f"[{p['merge_commit_sha'][:8]}](https://github.com/{repo}/commit/{p['merge_commit_sha']})"
+            pr_link = f"[#{p['number']}]({p['html_url']})"
+            messages.append(
+                f"   {pr_link} - {p['title']} - {sha_link} by {userlink}"
+            )
 
-        # Construct release notes markdown
-        title = (
-            'Kids First' + ' '.join(self.repo.split('-')).title().lstrip('Kf')
-        )
-        notes = f"# {title} Release {self.release_version}"
-        notes += '\n\n## Features\n\n'
-        notes += '### Summary\n\n'
-        notes += f'Feature Emojis: {emoji_counts} \n'
-        notes += f'Feature Categories: {category_counts} \n\n'
-        notes += '### New features and changes\n\n'
-        notes += prs
+        return "\n".join(messages)
 
-        print('#'*80)
-        print(notes+'\n\n')
-
-        # Write markdown file
-        file_name = f'{self.repo}-{self.release_version}.md'
-        with open(file_name, 'w') as f:
-            f.write(notes)
-
-        print(f'Saved release notes to {file_name}')
-
-    def release_notes(self,
-                      org=config.DEFAULT_GH_ORG,
-                      repo=config.DEFAULT_GH_REPO,
-                      version_type='minor'):
+    def build_release_notes(self, repo, release_type, gh_token=None):
         """
         Make release notes
         """
-        print('\nBegin making release notes ...')
-        # Set up session
-        gh_token = get_gh_token()
-        self.org = org
-        self.repo = repo
-        self.base_url = f'{self.api}/repos/{self.org}/{self.repo}'
-        self.session = requests.Session()
-        self.session.headers.update({'Authorization': 'token ' + gh_token})
+        print("\nBegin making release notes ...")
 
-        # Get all PRs
-        prs = self.get_prs()
-        if not prs:
-            print('0 PRs found. Nothing to do, exiting')
-            exit(0)
+        # Set up session
+        self.base_url = f"{self.api}/repos/{repo}"
+        self.session = Session()
+        if gh_token:
+            self.session.headers.update({"Authorization": "token " + gh_token})
 
         # Get tag of last release
-        latest_tag = self.get_last_tag()
+        print(f"Fetching latest tag ...")
+        latest_tag = self._get_last_tag()
 
-        # Make pull request DataFrame
-        pr_df = self.make_pr_df(prs, latest_tag)
+        if latest_tag:
+            print(f"Latest tag: {latest_tag}")
+        else:
+            print(f"No tags found")
+            latest_tag = {"name": "0.0.0", "date": ""}
 
-        # Generate next release version
-        self.release_version = self.next_release_version(
-            latest_tag['version_number'],
-            version_type=version_type)
+        # Get all non-release PRs that were merged into master after the last release
+        prs = self._get_merged_prs(latest_tag["date"])
 
-        # Create release notes
-        self.create_release_markdown(pr_df)
+        # count the emojis and fix missing spaces in titles
+        counts = {"emojis": defaultdict(int), "categories": defaultdict(int)}
+        for p in prs:
+            emojis, p["title"] = self._starting_emojis(p["title"].strip())
+            for e in emojis:
+                counts["emojis"][e] += 1
+                counts["categories"][
+                    emoji_categories.get(e, config.OTHER_CATEGORY)
+                ] += 1
+
+        # Update release version
+        version = self._next_release_version(
+            latest_tag["name"], release_type=release_type
+        )
+        print(f"Next release version is {version}")
+
+        # Compose markdown
+
+        markdown = self._to_markdown(repo, version, counts, prs)
+        print(markdown)
+        return version, markdown
