@@ -5,6 +5,7 @@ import emoji
 import regex
 from d3b_utils.requests_retry import Session
 
+import semver
 from kf_release_maker import config
 
 MAJOR = "major"
@@ -16,6 +17,11 @@ emoji_categories = {
     for category, emoji_set in config.EMOJI_CATEGORIES.items()
     for e in emoji_set
 }
+
+
+def split_prefix(text, pattern):
+    start = regex.search(pattern, text).start()
+    return text[0:start], text[start:]
 
 
 class GitHubReleaseMaker(object):
@@ -98,11 +104,18 @@ class GitHubReleaseMaker(object):
 
         # Get latest commit of last tagged release
         if len(tags) > 0:
-            return {
-                "name": tags[0]["name"],
-                "date": self._get_commit_date(tags[0]["commit"]["url"]),
-                "commit_sha": tags[0]["commit"]["sha"],
-            }
+            for t in tags:
+                try:
+                    prefix, version = split_prefix(t["name"], r"\d")
+                    # Raise on non-semver tags so we can skip them
+                    semver.VersionInfo.parse(version)
+                    return {
+                        "name": t["name"],
+                        "date": self._get_commit_date(t["commit"]["url"]),
+                        "commit_sha": t["commit"]["sha"],
+                    }
+                except ValueError:
+                    pass
         else:
             return None
 
@@ -175,7 +188,7 @@ class GitHubReleaseMaker(object):
         # Get all non-release PRs that were merged into master after the last release
         prs = self._get_merged_prs(latest_tag["date"])
 
-        # count the emojis and fix missing spaces in titles
+        # Count the emojis and fix missing spaces in titles
         counts = {"emojis": defaultdict(int), "categories": defaultdict(int)}
         for p in prs:
             emojis, p["title"] = self._starting_emojis(p["title"].strip())
@@ -186,8 +199,9 @@ class GitHubReleaseMaker(object):
                 ] += 1
 
         # Update release version
-        version = self._next_release_version(
-            latest_tag["name"], release_type=release_type
+        prefix, prev_version = split_prefix(latest_tag["name"], r"\d")
+        version = prefix + self._next_release_version(
+            prev_version, release_type=release_type
         )
         print(f"Next release version is {version}")
 
