@@ -62,7 +62,7 @@ def release_notes(repo, release_type):
     with open(file_name, "w") as f:
         f.write(markdown)
 
-    print(f"Saved release notes to {file_name}")
+    print(f"{new_version}\0{file_name}")
 
 
 cli.add_command(release_notes)

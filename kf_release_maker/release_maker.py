@@ -1,3 +1,4 @@
+import sys
 from collections import defaultdict
 from urllib.parse import urlencode
 
@@ -54,7 +55,10 @@ class GitHubReleaseMaker(object):
         """
         response = self.session.get(url, **request_kwargs)
         if response.status_code != 200:
-            print(f"Could not fetch {url}! Caused by: {response.text}")
+            print(
+                f"Could not fetch {url}! Caused by: {response.text}",
+                file=sys.stderr,
+            )
             exit(1)
 
         return response
@@ -67,7 +71,7 @@ class GitHubReleaseMaker(object):
         url = f"{endpoint}?{urlencode(query_params)}"
         items = True
         while items:
-            print(f'... page {query_params["page"]} ...')
+            print(f'... page {query_params["page"]} ...', file=sys.stderr)
             url = f"{endpoint}?{urlencode(query_params)}"
             items = self._get(url).json()
             yield from items
@@ -77,7 +81,7 @@ class GitHubReleaseMaker(object):
         """
         Get all non-release PRs merged into master after the given time
         """
-        print(f"Fetching PRs ...")
+        print(f"Fetching PRs ...", file=sys.stderr)
         endpoint = f"{self.base_url}/pulls"
         query_params = {"base": "master", "state": "closed"}
         prs = []
@@ -167,7 +171,7 @@ class GitHubReleaseMaker(object):
         """
         Make release notes
         """
-        print("\nBegin making release notes ...")
+        print("\nBegin making release notes ...", file=sys.stderr)
 
         # Set up session
         self.base_url = f"{self.api}/repos/{repo}"
@@ -176,13 +180,13 @@ class GitHubReleaseMaker(object):
             self.session.headers.update({"Authorization": "token " + gh_token})
 
         # Get tag of last release
-        print(f"Fetching latest tag ...")
+        print(f"Fetching latest tag ...", file=sys.stderr)
         latest_tag = self._get_last_tag()
 
         if latest_tag:
-            print(f"Latest tag: {latest_tag}")
+            print(f"Latest tag: {latest_tag}", file=sys.stderr)
         else:
-            print(f"No tags found")
+            print(f"No tags found", file=sys.stderr)
             latest_tag = {"name": "0.0.0", "date": ""}
 
         # Get all non-release PRs that were merged into master after the last release
@@ -203,10 +207,10 @@ class GitHubReleaseMaker(object):
         version = prefix + self._next_release_version(
             prev_version, release_type=release_type
         )
-        print(f"Next release version is {version}")
+        print(f"Next release version is {version}", file=sys.stderr)
 
         # Compose markdown
 
         markdown = self._to_markdown(repo, version, counts, prs)
-        print(markdown)
+        print(markdown, file=sys.stderr)
         return version, markdown
