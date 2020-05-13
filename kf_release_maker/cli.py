@@ -70,7 +70,7 @@ def release_notes(repo, release_type, project_title):
     with open(file_name, "w") as f:
         f.write(markdown)
 
-    print(f"{new_version}\0{file_name}")
+    print(f"{new_version}\t{file_name}")
 
 
 cli.add_command(release_notes)
