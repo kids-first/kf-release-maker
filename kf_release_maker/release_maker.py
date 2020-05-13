@@ -12,6 +12,8 @@ from kf_release_maker import config
 MAJOR = "major"
 MINOR = "minor"
 PATCH = "patch"
+PRERELEASE = "prerelease"
+
 release_pattern = r"\s*[" + config.RELEASE_EMOJIS + r"]\s*Release"
 emoji_categories = {
     e: category
@@ -144,7 +146,7 @@ class GitHubReleaseMaker(object):
 
     def _to_markdown(self, project_title, repo, version, counts, prs):
         messages = [
-            f"# {project_title or repo} release {version}",
+            f"# {project_title or repo} {'release' if version != PRERELEASE else ''}{version}",
             "",
             "### Summary",
             "",
@@ -205,11 +207,13 @@ class GitHubReleaseMaker(object):
                 ] += 1
 
         # Update release version
-        prefix, prev_version = split_prefix(latest_tag["name"], r"\d")
-        version = prefix + self._next_release_version(
-            prev_version, release_type=release_type
-        )
-        print(f"Next release version is {version}", file=sys.stderr)
+        if release_type == PRERELEASE:
+            version = PRERELEASE
+        else:
+            prefix, prev_version = split_prefix(latest_tag["name"], r"\d")
+            version = prefix + self._next_release_version(
+                prev_version, release_type=release_type
+            )
 
         # Compose markdown
 

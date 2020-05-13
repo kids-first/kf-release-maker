@@ -9,6 +9,7 @@ from kf_release_maker.release_maker import (
     MAJOR,
     MINOR,
     PATCH,
+    PRERELEASE,
     GitHubReleaseMaker,
 )
 
@@ -35,7 +36,7 @@ def cli():
 @click.option(
     "--release_type",
     default="minor",
-    type=click.Choice([MAJOR, MINOR, PATCH]),
+    type=click.Choice([MAJOR, MINOR, PATCH, PRERELEASE]),
     prompt="What kind of release is this?",
     help="Version types follow semantic versioning",
 )
