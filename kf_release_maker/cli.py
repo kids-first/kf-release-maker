@@ -46,7 +46,8 @@ def cli():
     default="",
     help="This will be put before the release number in the generated notes",
 )
-def release_notes(repo, release_type, project_title):
+@click.option("--github_token", default="", help="API token for GitHub")
+def release_notes(repo, release_type, project_title, github_token):
     """
     Create a release notes markdown file containing:
 
@@ -62,7 +63,7 @@ def release_notes(repo, release_type, project_title):
         repo=repo,
         release_type=release_type,
         project_title=project_title,
-        gh_token=os.getenv(config.GH_TOKEN_VAR),
+        gh_token=github_token or os.getenv(config.GH_TOKEN_VAR),
     )
 
     # Write markdown file
