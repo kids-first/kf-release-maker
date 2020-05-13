@@ -39,7 +39,13 @@ def cli():
     prompt="What kind of release is this?",
     help="Version types follow semantic versioning",
 )
-def release_notes(repo, release_type):
+@click.option(
+    "--project_title",
+    prompt="The title of the project",
+    default="",
+    help="This will be put before the release number in the generated notes",
+)
+def release_notes(repo, release_type, project_title):
     """
     Create a release notes markdown file containing:
 
@@ -54,6 +60,7 @@ def release_notes(repo, release_type):
     new_version, markdown = r.build_release_notes(
         repo=repo,
         release_type=release_type,
+        project_title=project_title,
         gh_token=os.getenv(config.GH_TOKEN_VAR),
     )
 

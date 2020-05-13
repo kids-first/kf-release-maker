@@ -142,9 +142,9 @@ class GitHubReleaseMaker(object):
 
         return new_version
 
-    def _to_markdown(self, repo, version, counts, prs):
+    def _to_markdown(self, project_title, repo, version, counts, prs):
         messages = [
-            f"Release {version}",
+            f"# {project_title or repo} release {version}",
             "",
             "### Summary",
             "",
@@ -167,7 +167,9 @@ class GitHubReleaseMaker(object):
 
         return "\n".join(messages)
 
-    def build_release_notes(self, repo, release_type, gh_token=None):
+    def build_release_notes(
+        self, repo, release_type, project_title=None, gh_token=None
+    ):
         """
         Make release notes
         """
@@ -211,6 +213,6 @@ class GitHubReleaseMaker(object):
 
         # Compose markdown
 
-        markdown = self._to_markdown(repo, version, counts, prs)
+        markdown = self._to_markdown(project_title, repo, version, counts, prs)
         print(markdown, file=sys.stderr)
         return version, markdown
