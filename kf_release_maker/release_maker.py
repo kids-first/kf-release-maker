@@ -162,7 +162,7 @@ class GitHubReleaseMaker(object):
             sha_link = f"[{p['merge_commit_sha'][:8]}](https://github.com/{repo}/commit/{p['merge_commit_sha']})"
             pr_link = f"[#{p['number']}]({p['html_url']})"
             messages.append(
-                f"   {pr_link} - {p['title']} - {sha_link} by {userlink}"
+                f"- {pr_link} - {p['title']} - {sha_link} by {userlink}"
             )
 
         return "\n".join(messages)
@@ -216,7 +216,7 @@ class GitHubReleaseMaker(object):
         # Compose markdown
         project_title = project_title or repo
         release_prefix = "release " if (version != PRERELEASE) else ""
-        markdown = f"# {project_title} {release_prefix}{version}\n\n"
+        markdown = f"## {project_title} {release_prefix}{version}\n\n"
         if blurb:
             markdown += f"{blurb}\n\n"
         markdown += self._to_markdown(repo, counts, prs)
