@@ -47,7 +47,13 @@ def cli():
     help="This will be put before the release number in the generated notes",
 )
 @click.option("--github_token", default="", help="API token for GitHub")
-def release_notes(repo, release_type, project_title, github_token):
+@click.option(
+    "--blurb_file",
+    prompt="Markdown file containing a blurb to prepend to the notes for this release",
+    default="",
+    help="Markdown file containing a blurb to prepend to the notes for this release",
+)
+def release_notes(repo, release_type, project_title, github_token, blurb_file):
     """
     Create a release notes markdown file containing:
 
@@ -57,12 +63,17 @@ def release_notes(repo, release_type, project_title, github_token):
 
     - Emoji and category summaries for Pull Requests in the release
     """
+    blurb = None
+    if blurb_file:
+        with open(blurb_file, "r") as bf:
+            blurb = bf.read().strip()
 
     r = GitHubReleaseMaker()
     new_version, markdown = r.build_release_notes(
         repo=repo,
         release_type=release_type,
         project_title=project_title,
+        blurb=blurb,
         gh_token=github_token or os.getenv(config.GH_TOKEN_VAR),
     )
 

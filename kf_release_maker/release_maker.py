@@ -144,10 +144,8 @@ class GitHubReleaseMaker(object):
 
         return new_version
 
-    def _to_markdown(self, project_title, repo, version, counts, prs):
+    def _to_markdown(self, repo, counts, prs):
         messages = [
-            f"# {project_title or repo} {'release' if version != PRERELEASE else ''}{version}",
-            "",
             "### Summary",
             "",
             "- Emojis: "
@@ -170,7 +168,7 @@ class GitHubReleaseMaker(object):
         return "\n".join(messages)
 
     def build_release_notes(
-        self, repo, release_type, project_title=None, gh_token=None
+        self, repo, release_type, project_title=None, blurb=None, gh_token=None
     ):
         """
         Make release notes
@@ -216,7 +214,12 @@ class GitHubReleaseMaker(object):
             )
 
         # Compose markdown
+        project_title = project_title or repo
+        release_prefix = "release " if (version != PRERELEASE) else ""
+        markdown = f"# {project_title} {release_prefix}{version}\n\n"
+        if blurb:
+            markdown += f"{blurb}\n\n"
+        markdown += self._to_markdown(repo, counts, prs)
 
-        markdown = self._to_markdown(project_title, repo, version, counts, prs)
         print(markdown, file=sys.stderr)
         return version, markdown
