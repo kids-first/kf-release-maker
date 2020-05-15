@@ -12,7 +12,6 @@ from kf_release_maker import config
 MAJOR = "major"
 MINOR = "minor"
 PATCH = "patch"
-PRERELEASE = "prerelease"
 
 release_pattern = r"\s*[" + config.RELEASE_EMOJIS + r"]\s*Release"
 emoji_categories = {
@@ -57,10 +56,7 @@ class GitHubReleaseMaker(object):
         """
         response = self.session.get(url, **request_kwargs)
         if response.status_code != 200:
-            print(
-                f"Could not fetch {url}! Caused by: {response.text}",
-                file=sys.stderr,
-            )
+            print(f"Could not fetch {url}! Caused by: {response.text}")
             exit(1)
 
         return response
@@ -73,7 +69,7 @@ class GitHubReleaseMaker(object):
         url = f"{endpoint}?{urlencode(query_params)}"
         items = True
         while items:
-            print(f'... page {query_params["page"]} ...', file=sys.stderr)
+            print(f'... page {query_params["page"]} ...')
             url = f"{endpoint}?{urlencode(query_params)}"
             items = self._get(url).json()
             yield from items
@@ -83,7 +79,7 @@ class GitHubReleaseMaker(object):
         """
         Get all non-release PRs merged into master after the given time
         """
-        print(f"Fetching PRs ...", file=sys.stderr)
+        print(f"Fetching PRs ...")
         endpoint = f"{self.base_url}/pulls"
         query_params = {"base": "master", "state": "closed"}
         prs = []
@@ -168,12 +164,12 @@ class GitHubReleaseMaker(object):
         return "\n".join(messages)
 
     def build_release_notes(
-        self, repo, release_type, project_title=None, blurb=None, gh_token=None
+        self, repo, release_type, blurb=None, gh_token=None
     ):
         """
         Make release notes
         """
-        print("\nBegin making release notes ...", file=sys.stderr)
+        print("\nBegin making release notes ...")
 
         # Set up session
         self.base_url = f"{self.api}/repos/{repo}"
@@ -182,13 +178,13 @@ class GitHubReleaseMaker(object):
             self.session.headers.update({"Authorization": "token " + gh_token})
 
         # Get tag of last release
-        print(f"Fetching latest tag ...", file=sys.stderr)
+        print(f"Fetching latest tag ...")
         latest_tag = self._get_last_tag()
 
         if latest_tag:
-            print(f"Latest tag: {latest_tag}", file=sys.stderr)
+            print(f"Latest tag: {latest_tag}")
         else:
-            print(f"No tags found", file=sys.stderr)
+            print(f"No tags found")
             latest_tag = {"name": "0.0.0", "date": ""}
 
         # Get all non-release PRs that were merged into master after the last release
@@ -205,21 +201,18 @@ class GitHubReleaseMaker(object):
                 ] += 1
 
         # Update release version
-        if release_type == PRERELEASE:
-            version = PRERELEASE
-        else:
-            prefix, prev_version = split_prefix(latest_tag["name"], r"\d")
-            version = prefix + self._next_release_version(
-                prev_version, release_type=release_type
-            )
+        prefix, prev_version = split_prefix(latest_tag["name"], r"\d")
+        version = prefix + self._next_release_version(
+            prev_version, release_type=release_type
+        )
 
         # Compose markdown
-        project_title = project_title or repo
-        release_prefix = "release " if (version != PRERELEASE) else ""
-        markdown = f"## {project_title} {release_prefix}{version}\n\n"
+        markdown = f"## Release {version}\n\n"
         if blurb:
             markdown += f"{blurb}\n\n"
         markdown += self._to_markdown(repo, counts, prs)
 
-        print(markdown, file=sys.stderr)
+        print("=" * 30 + "BEGIN RECORD" + "=" * 30)
+        print(markdown)
+        print("=" * 31 + "END RECORD" + "=" * 31)
         return version, markdown
