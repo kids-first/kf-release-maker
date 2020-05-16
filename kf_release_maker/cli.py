@@ -18,9 +18,9 @@ def cli():
 def options(function):
     function = click.option(
         "--blurb_file",
-        prompt="Markdown file containing a blurb to prepend to the notes for this release",
+        prompt="Optional markdown file containing a custom message to prepend to the notes for this release",
         default="",
-        help="Markdown file containing a blurb to prepend to the notes for this release",
+        help="Optional markdown file containing a custom message to prepend to the notes for this release",
     )(function)
     function = click.option(
         "--repo",
