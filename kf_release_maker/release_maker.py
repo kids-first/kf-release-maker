@@ -1,19 +1,18 @@
-import sys
 from collections import defaultdict
 from urllib.parse import urlencode
 
 import emoji
 import regex
+import semver
 from d3b_utils.requests_retry import Session
 
-import semver
 from kf_release_maker import config
 
 MAJOR = "major"
 MINOR = "minor"
 PATCH = "patch"
 
-release_pattern = r"\s*[" + config.RELEASE_EMOJIS + r"]\s*Release"
+release_pattern = r"\s*[" + config.RELEASE_EMOJIS + r"]\s*[Rr]elease"
 emoji_categories = {
     e: category
     for category, emoji_set in config.EMOJI_CATEGORIES.items()
@@ -21,12 +20,15 @@ emoji_categories = {
 }
 
 
-def split_prefix(text, pattern):
+def split_at_pattern(text, pattern):
+    """
+    Split a string where a pattern begins
+    """
     start = regex.search(pattern, text).start()
     return text[0:start], text[start:]
 
 
-class GitHubReleaseMaker(object):
+class GitHubReleaseNotes(object):
     def __init__(self, gh_api=config.DEFAULT_GH_API):
         self.api = gh_api
 
@@ -69,7 +71,6 @@ class GitHubReleaseMaker(object):
         url = f"{endpoint}?{urlencode(query_params)}"
         items = True
         while items:
-            print(f'... page {query_params["page"]} ...')
             url = f"{endpoint}?{urlencode(query_params)}"
             items = self._get(url).json()
             yield from items
@@ -108,7 +109,7 @@ class GitHubReleaseMaker(object):
         if len(tags) > 0:
             for t in tags:
                 try:
-                    prefix, version = split_prefix(t["name"], r"\d")
+                    prefix, version = split_at_pattern(t["name"], r"\d")
                     # Raise on non-semver tags so we can skip them
                     semver.VersionInfo.parse(version)
                     return {
@@ -141,6 +142,9 @@ class GitHubReleaseMaker(object):
         return new_version
 
     def _to_markdown(self, repo, counts, prs):
+        """
+        Converts accumulated information about the project into markdown
+        """
         messages = [
             "### Summary",
             "",
@@ -201,7 +205,7 @@ class GitHubReleaseMaker(object):
                 ] += 1
 
         # Update release version
-        prefix, prev_version = split_prefix(latest_tag["name"], r"\d")
+        prefix, prev_version = split_at_pattern(latest_tag["name"], r"\d")
         version = prefix + self._next_release_version(
             prev_version, release_type=release_type
         )
@@ -212,7 +216,4 @@ class GitHubReleaseMaker(object):
             markdown += f"{blurb}\n\n"
         markdown += self._to_markdown(repo, counts, prs)
 
-        print("=" * 30 + "BEGIN RECORD" + "=" * 30)
-        print(markdown)
-        print("=" * 31 + "END RECORD" + "=" * 31)
         return version, markdown
