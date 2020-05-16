@@ -1,3 +1,6 @@
+import os
+import shutil
+import tempfile
 from collections import defaultdict
 from urllib.parse import urlencode
 
@@ -5,12 +8,17 @@ import emoji
 import regex
 import semver
 from d3b_utils.requests_retry import Session
+from github import Github
+from github.GithubException import UnknownObjectException
 
 from kf_release_maker import config
+
+CHANGEFILE = "CHANGELOG.md"
 
 MAJOR = "major"
 MINOR = "minor"
 PATCH = "patch"
+release_options = [MAJOR, MINOR, PATCH]
 
 release_pattern = r"\s*[" + config.RELEASE_EMOJIS + r"]\s*[Rr]elease"
 emoji_categories = {
@@ -136,7 +144,7 @@ class GitHubReleaseNotes(object):
         else:
             raise ValueError(
                 f"Invalid release type: {release_type}! Release type "
-                f"must be one of ['{MAJOR}', '{MINOR}', '{PATCH}']!"
+                f"must be one of {release_options}!"
             )
 
         return new_version
@@ -167,9 +175,7 @@ class GitHubReleaseNotes(object):
 
         return "\n".join(messages)
 
-    def build_release_notes(
-        self, repo, release_type, blurb=None, gh_token=None
-    ):
+    def build_release_notes(self, repo, blurb=None, gh_token=None):
         """
         Make release notes
         """
@@ -204,16 +210,154 @@ class GitHubReleaseNotes(object):
                     emoji_categories.get(e, config.OTHER_CATEGORY)
                 ] += 1
 
+        # Compose markdown
+        markdown = self._to_markdown(repo, counts, prs)
+        if blurb:
+            markdown = f"{blurb}\n\n" + markdown
+
+        print("=" * 32 + "BEGIN DELTA" + "=" * 32)
+        print(markdown)
+        print("=" * 33 + "END DELTA" + "=" * 33)
+
+        while True:
+            release_type = input(
+                f"What type of semantic versioning release is this {release_options}? "
+            ).lower()
+            if release_type in release_options:
+                break
+            else:
+                print(f"'{release_type}' is not one of {release_options}")
+
         # Update release version
         prefix, prev_version = split_at_pattern(latest_tag["name"], r"\d")
         version = prefix + self._next_release_version(
-            prev_version, release_type=release_type
+            prev_version, release_type
         )
+        markdown = f"## Release {version}\n\n" + markdown
 
-        # Compose markdown
-        markdown = f"## Release {version}\n\n"
-        if blurb:
-            markdown += f"{blurb}\n\n"
-        markdown += self._to_markdown(repo, counts, prs)
+        print(f"Previous version: {prev_version}")
+        print(f"New version: {version}")
 
         return version, markdown
+
+
+def new_changelog(repo, blurb_file):
+    """
+    Creates release notes markdown containing:
+    - The next release version number
+    - A changelog of Pull Requests merged into master since the last release
+    - Emoji and category summaries for Pull Requests in the release
+
+    Then merges that into the existing changelog.
+    """
+    github_token = os.getenv(config.GH_TOKEN_VAR)
+
+    # Build notes for new changes
+
+    blurb = None
+    if blurb_file:
+        with open(blurb_file, "r") as bf:
+            blurb = bf.read().strip()
+
+    new_version, new_markdown = GitHubReleaseNotes().build_release_notes(
+        repo=repo, gh_token=github_token, blurb=blurb,
+    )
+
+    if new_version not in new_markdown.partition("\n")[0]:
+        print(
+            f"New version '{new_version}' not in release title of new markdown."
+        )
+        return None, None, None
+
+    # Load previous changelog file
+
+    gh_repo = Github(github_token).get_repo(repo)
+    try:
+        prev_markdown = gh_repo.get_contents(CHANGEFILE).decoded_content.decode(
+            "utf-8"
+        )
+    except UnknownObjectException:
+        prev_markdown = ""
+
+    # Remove previous title line if not specific to a particular release
+
+    if "\n" in prev_markdown:
+        prev_title, prev_markdown = prev_markdown.split("\n", 1)
+        if regex.search(r"[Rr]elease .*\d+\.\d+\.\d+", prev_title):
+            prev_markdown = "\n".join([prev_title, prev_markdown])
+
+    # Update changelog with new release notes
+
+    if new_version in prev_markdown.partition("\n")[0]:
+        print(f"\nNew version '{new_version}' already in {CHANGEFILE}.")
+        return None, None, None
+    else:
+        changelog = "\n\n".join([new_markdown, prev_markdown]).rstrip()
+        return new_version, new_markdown, changelog
+
+
+def make_release(repo, project_title, blurb_file, pre_release_script):
+    """
+    Generate a new changelog, run the script, and then make a PR on GitHub
+    """
+    github_token = os.getenv(config.GH_TOKEN_VAR)
+
+    new_version, new_markdown, changelog = new_changelog(repo, blurb_file)
+
+    if changelog:
+        # Attach project header
+        changelog = f"# {project_title} Change History\n\n{changelog}"
+
+        # Freshly clone repo
+        tmp = os.path.join(tempfile.gettempdir(), "release_maker")
+        shutil.rmtree(tmp, ignore_errors=True)
+        print(f"Cloning https://github.com/{repo}.git to {tmp} ...")
+        os.system(
+            f"git clone --quiet --depth 1 https://{github_token}@github.com/{repo}.git {tmp}"
+        )
+        os.chdir(tmp)
+
+        print("Writing updated changelog file ...")
+        with open(CHANGEFILE, "w") as cl:
+            cl.write(changelog)
+
+        if pre_release_script:
+            print(f"Executing pre-release script {pre_release_script} ...")
+            os.chmod(pre_release_script, "u+x")
+            os.system(pre_release_script)
+
+        # Create and push new release branch
+        release_branch_name = f"🔖-release-{new_version}"
+        print(f"Submitting release branch {release_branch_name} ...")
+        os.system(f"git checkout --quiet -b {release_branch_name}")
+        os.system("git add -A")
+        os.system(
+            f"git commit --quiet -m ':bookmark: Release {new_version}\n\n{new_markdown}'"
+        )
+        os.system(
+            f"git push --force origin {release_branch_name} > /dev/null 2>&1"
+        )
+
+        # Create GitHub Pull Request
+        print("Submitting PR for release ...")
+        gh_repo = Github(github_token).get_repo(repo)
+        pr_title = f"🔖 Release {new_version}"
+        pr_url = None
+        for p in gh_repo.get_pulls(state="open", base="master"):
+            if p.title == pr_title:
+                pr_url = p.html_url
+                break
+
+        if pr_url:
+            print(f"Updated release PR: {pr_url}")
+        else:
+            pr = gh_repo.create_pull(
+                title=pr_title,
+                body=new_markdown,
+                head=release_branch_name,
+                base="master",
+            )
+            pr.add_to_labels("release")
+            print(f"Created release PR: {pr.html_url}")
+    else:
+        print("Doing nothing.")
